@@ -353,9 +353,6 @@ void Loader::Impl::buildModGraph() {
 }
 
 void Loader::Impl::loadModGraph(Mod* node, bool early) {
-    if (node->isEnabled()) {
-        return;
-    }
     if (early && !node->needsEarlyLoad()) {
         m_modsToLoad.push_back(node);
         return;
@@ -373,19 +370,12 @@ void Loader::Impl::loadModGraph(Mod* node, bool early) {
     log::debug("{} {}", node->getID(), node->getVersion());
     log::pushNest();
 
-    if (node->shouldLoad()) {
-        bool hasUnresolvedDependencies = false;
+    if (node->isEnabled()) {
         for (auto const& dep : node->m_impl->m_dependants) {
-            if (dep->isEnabled())
-                continue;
             m_modsToLoad.push_front(dep);
-            hasUnresolvedDependencies = true;
         }
-        if (hasUnresolvedDependencies) {
-            log::debug("Has unresolved dependencies, loading later");
-            log::popNest();
-            return;
-        }
+        log::popNest();
+        return;
     }
 
     m_currentlyLoadingMod = node;
@@ -628,14 +618,16 @@ void Loader::Impl::continueRefreshModGraph() {
 
     switch (m_loadingState) {
         case LoadingState::Mods:
-            log::debug("Loading mods");
-            log::pushNest();
-            this->loadModGraph(m_modsToLoad.front(), false);
-            log::popNest();
-            m_modsToLoad.pop_front();
-            if (m_modsToLoad.empty())
-                m_loadingState = LoadingState::Problems;
-            break;
+            if (!m_modsToLoad.empty()) {
+                log::debug("Loading mods");
+                log::pushNest();
+                this->loadModGraph(m_modsToLoad.front(), false);
+                log::popNest();
+                m_modsToLoad.pop_front();
+                break;
+            }
+            m_loadingState = LoadingState::Problems;
+            [[fallthrough]];
         case LoadingState::Problems:
             log::debug("Finding problems");
             log::pushNest();
@@ -700,10 +692,10 @@ void Loader::Impl::addUninitializedHook(Hook* hook, Mod* mod) {
 bool Loader::Impl::loadHooks() {
     m_readyToHook = true;
     bool hadErrors = false;
-    for (auto const& hook : m_uninitializedHooks) {
-        auto res = hook.second->addHook(hook.first);
+    for (auto const& [hook, mod] : m_uninitializedHooks) {
+        auto res = mod->addHook(hook);
         if (!res) {
-            log::logImpl(Severity::Error, hook.second, "{}", res.unwrapErr());
+            log::logImpl(Severity::Error, mod, "{}", res.unwrapErr());
             hadErrors = true;
         }
     }
